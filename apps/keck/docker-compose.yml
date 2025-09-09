@@ -1,0 +1,101 @@
+version: '3.8'
+
+services:
+  # Redis for multi-node synchronization
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    networks:
+      - keck_network
+
+  # PostgreSQL database (shared by all Keck nodes)
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: keck
+      POSTGRES_USER: keck
+      POSTGRES_PASSWORD: keck_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - keck_network
+
+  # Keck Node 1
+  keck-node-1:
+    build: .
+    environment:
+      - KECK_PORT=3001
+      - DATABASE_URL=postgres://keck:keck_password@postgres:5432/keck
+      - REDIS_URL=redis://redis:6379
+      - NODE_ID=keck-node-1
+    ports:
+      - "3001:3001"
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - keck_network
+    restart: unless-stopped
+
+  # Keck Node 2
+  keck-node-2:
+    build: .
+    environment:
+      - KECK_PORT=3002
+      - DATABASE_URL=postgres://keck:keck_password@postgres:5432/keck
+      - REDIS_URL=redis://redis:6379
+      - NODE_ID=keck-node-2
+    ports:
+      - "3002:3002"
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - keck_network
+    restart: unless-stopped
+
+  # Keck Node 3
+  keck-node-3:
+    build: .
+    environment:
+      - KECK_PORT=3003
+      - DATABASE_URL=postgres://keck:keck_password@postgres:5432/keck
+      - REDIS_URL=redis://redis:6379
+      - NODE_ID=keck-node-3
+    ports:
+      - "3003:3003"
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - keck_network
+    restart: unless-stopped
+
+  # Nginx Load Balancer
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf
+    depends_on:
+      - keck-node-1
+      - keck-node-2
+      - keck-node-3
+    networks:
+      - keck_network
+    restart: unless-stopped
+
+volumes:
+  redis_data:
+  postgres_data:
+
+networks:
+  keck_network:
+    driver: bridge
