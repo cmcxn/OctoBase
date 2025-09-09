@@ -32,8 +32,10 @@ pub async fn upgrade_handler(
     if let Err(e) = context.create_workspace(workspace.clone()).await {
         error!("create workspace failed: {:?}", e);
     }
+    
+    // Context now implements RPC with Redis support
     ws.protocols(["AFFiNE"]).on_upgrade(move |socket| {
-        handle_connector(context.clone(), workspace.clone(), identifier, move || {
+        handle_connector(context, workspace.clone(), identifier, move || {
             axum_socket_connector(socket, &workspace)
         })
         .map(|_| ())
