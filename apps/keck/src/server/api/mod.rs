@@ -4,7 +4,7 @@ mod blobs;
 mod blocks;
 mod doc;
 
-use std::collections::{HashMap, hash_map::Entry};
+use std::collections::HashMap;
 
 use axum::Router;
 #[cfg(feature = "api")]
@@ -15,9 +15,9 @@ use axum::{
     routing::{delete, get, head, post},
 };
 use doc::doc_apis;
-use jwst_rpc::{BroadcastChannels, BroadcastType, RpcContextImpl};
+use jwst_rpc::{BroadcastChannels, RpcContextImpl};
 use jwst_storage::{BlobStorageType, JwstStorage, JwstStorageResult};
-use tokio::sync::{RwLock, broadcast, mpsc::Sender};
+use tokio::sync::RwLock;
 
 use super::{redis_sync::RedisSync, *};
 
