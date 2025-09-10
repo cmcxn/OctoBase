@@ -6,7 +6,7 @@ use sea_orm::Condition;
 use tokio::task::spawn_blocking;
 
 use super::{entities::prelude::*, *};
-use crate::types::JwstStorageResult;
+use crate::types::{JwstStorageError, JwstStorageResult};
 
 const MAX_TRIM_UPDATE_LIMIT: u64 = 500;
 
@@ -36,6 +36,49 @@ impl DocDBStorage {
         let pool = create_connection(database, is_sqlite).await?;
 
         Self::init_with_pool(pool, get_bucket(is_sqlite)).await
+    }
+
+    #[cfg(feature = "postgres")]
+    pub async fn listen_remote(self: Arc<Self>, database: &str) -> JwstStorageResult<()> {
+        use base64::engine::general_purpose::STANDARD as BASE64;
+        use base64::Engine;
+        use sqlx::postgres::PgListener;
+
+        if !database.starts_with("postgres") {
+            return Ok(());
+        }
+
+        let mut listener = PgListener::connect(database)
+            .await
+            .map_err(|e| JwstStorageError::Crud(e.to_string()))?;
+        listener
+            .listen("jwst_docs_update")
+            .await
+            .map_err(|e| JwstStorageError::Crud(e.to_string()))?;
+        tokio::spawn(async move {
+            loop {
+                match listener.recv().await {
+                    Ok(notification) => {
+                        let payload = notification.payload().to_string();
+                        if let Some((ws, data)) = payload.split_once(':') {
+                            if let Ok(binary) = BASE64.decode(data) {
+                                if let Some(workspace) = self.workspaces.write().await.get_mut(ws) {
+                                    workspace.sync_messages(vec![binary.clone()]);
+                                }
+                                if let Some(tx) = self.remote.read().await.get(ws) {
+                                    let _ = tx.send(binary);
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        warn!("pg listener error: {:?}", e);
+                        break;
+                    }
+                }
+            }
+        });
+        Ok(())
     }
 
     pub fn remote(&self) -> &RwLock<HashMap<String, Sender<Vec<u8>>>> {
@@ -203,12 +246,31 @@ impl DocDBStorage {
         Self::insert(conn, workspace, guid, blob).await?;
         trace!("end update: {guid}");
 
+        let msg = encode_update_as_message(blob.into())?;
         trace!("update {}bytes to {}", blob.len(), guid);
         if let Entry::Occupied(remote) = self.remote.write().await.entry(guid.into()) {
             let broadcast = &remote.get();
-            if broadcast.send(encode_update_as_message(blob.into())?).is_err() {
+            if broadcast.send(msg.clone()).is_err() {
                 // broadcast failures are not fatal errors, only warnings are required
                 warn!("send {guid} update to pipeline failed");
+            }
+        }
+        #[cfg(feature = "postgres")]
+        if matches!(self.pool, DatabaseConnection::SqlxPostgresPoolConnection(_)) {
+            use base64::engine::general_purpose::STANDARD as BASE64;
+            use base64::Engine;
+            use sea_orm::{DatabaseBackend, Statement};
+            let payload = format!("{}:{}", workspace, BASE64.encode(&msg));
+            if let Err(e) = self
+                .pool
+                .execute(Statement::from_sql_and_values(
+                    DatabaseBackend::Postgres,
+                    "SELECT pg_notify('jwst_docs_update', $1)",
+                    [payload.into()],
+                ))
+                .await
+            {
+                warn!("pg notify failed: {:?}", e);
             }
         }
         trace!("end update broadcast: {guid}");
