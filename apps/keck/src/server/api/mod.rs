@@ -19,7 +19,7 @@ use jwst_rpc::{BroadcastChannels, RpcContextImpl};
 use jwst_storage::{BlobStorageType, JwstStorage, JwstStorageResult};
 use tokio::sync::RwLock;
 
-use super::*;
+use super::{redis_sync::RedisSync, *};
 
 #[derive(Deserialize)]
 #[cfg_attr(feature = "api", derive(utoipa::IntoParams))]
@@ -44,6 +44,7 @@ pub struct Context {
     channel: BroadcastChannels,
     storage: JwstStorage,
     webhook: Arc<std::sync::RwLock<String>>,
+    redis_sync: Option<Arc<RedisSync>>,
 }
 
 impl Context {
@@ -65,12 +66,35 @@ impl Context {
         }
         .expect("Cannot create database");
 
+        // Initialize Redis sync if Redis URL is provided
+        let redis_sync = if let Ok(redis_url) = dotenvy::var("REDIS_URL") {
+            match RedisSync::new(&redis_url).await {
+                Ok(sync) => {
+                    if sync.is_connected().await {
+                        info!("Redis sync enabled: {}", redis_url);
+                        Some(Arc::new(sync))
+                    } else {
+                        warn!("Redis sync initialization failed, falling back to single-node mode");
+                        None
+                    }
+                }
+                Err(e) => {
+                    warn!("Failed to initialize Redis sync: {}, falling back to single-node mode", e);
+                    None
+                }
+            }
+        } else {
+            info!("Redis URL not provided, running in single-node mode");
+            None
+        };
+
         Context {
             channel: RwLock::new(HashMap::new()),
             storage,
             webhook: Arc::new(std::sync::RwLock::new(
                 dotenvy::var("HOOK_ENDPOINT").unwrap_or_default(),
             )),
+            redis_sync,
         }
     }
 
@@ -153,9 +177,13 @@ impl Context {
             .await
             .map(|w| self.register_webhook(w))
     }
+
+    pub fn get_redis_sync(&self) -> Option<Arc<RedisSync>> {
+        self.redis_sync.clone()
+    }
 }
 
-impl RpcContextImpl<'_> for Context {
+impl<'a> RpcContextImpl<'a> for Context {
     fn get_storage(&self) -> &JwstStorage {
         &self.storage
     }

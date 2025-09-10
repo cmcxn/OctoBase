@@ -42,7 +42,7 @@ impl Bucket {
         }
     }
 
-    pub async fn read(&self) -> BucketLocker {
+    pub async fn read(&self) -> BucketLocker<'_> {
         self.bucket.until_ready().await;
         match &self.lock {
             BucketLock::RwLock(lock) => BucketLocker::ReadLock(lock.read().await),
@@ -52,7 +52,7 @@ impl Bucket {
         }
     }
 
-    pub async fn write(&self) -> BucketLocker {
+    pub async fn write(&self) -> BucketLocker<'_> {
         self.bucket.until_ready().await;
         match &self.lock {
             BucketLock::RwLock(lock) => BucketLocker::WriteLock(lock.write().await),

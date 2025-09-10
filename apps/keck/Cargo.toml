@@ -49,9 +49,11 @@ reqwest = { version = "0.11.19", default-features = false, features = [
   "json",
   "rustls-tls",
 ] }
+redis = { version = "0.23.3", features = ["tokio-comp", "connection-manager"] }
 
 # ======= workspace dependencies =======
 anyhow = { workspace = true }
+chrono = { workspace = true }
 futures = { workspace = true }
 nanoid = { workspace = true }
 rand = { workspace = true }
@@ -60,6 +62,7 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 
 jwst-core = { workspace = true, features = ["large_refs"] }
+jwst-codec = { workspace = true }
 jwst-logger = { workspace = true }
 jwst-rpc = { workspace = true }
 jwst-storage = { workspace = true }

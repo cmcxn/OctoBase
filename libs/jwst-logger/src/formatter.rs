@@ -31,7 +31,7 @@ pub struct JWSTFormatter {
 }
 
 impl JWSTFormatter {
-    fn format_level(level: &Level) -> AnsiGenericString<str> {
+    fn format_level(level: &Level) -> AnsiGenericString<'_, str> {
         match *level {
             Level::ERROR => Color::Red.paint("ERROR"),
             Level::WARN => Color::Yellow.paint(" WARN"),
