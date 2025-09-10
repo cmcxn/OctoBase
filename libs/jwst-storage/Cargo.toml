@@ -40,6 +40,8 @@ chrono = { workspace = true, features = ["serde"] }
 futures = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["fs", "macros", "sync"] }
+base64 = "0.21.4"
+sqlx = { version = "0.7", default-features = false, features = ["postgres", "runtime-tokio-rustls"] }
 
 jwst-core = { workspace = true }
 jwst-codec = { workspace = true }

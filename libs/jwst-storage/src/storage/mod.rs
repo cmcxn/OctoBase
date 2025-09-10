@@ -51,6 +51,10 @@ impl JwstStorage {
             ),
         };
         let docs = SharedDocDBStorage::init_with_pool(pool.clone(), bucket.clone()).await?;
+        #[cfg(feature = "postgres")]
+        if database.starts_with("postgres") {
+            docs.listen_remote(database).await?;
+        }
 
         Ok(Self {
             pool,

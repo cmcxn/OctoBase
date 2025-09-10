@@ -18,11 +18,25 @@ pub struct SharedDocDBStorage(pub(super) Arc<DocDBStorage>);
 
 impl SharedDocDBStorage {
     pub async fn init_with_pool(pool: DatabaseConnection, bucket: Arc<Bucket>) -> JwstStorageResult<Self> {
-        Ok(Self(Arc::new(DocDBStorage::init_with_pool(pool, bucket).await?)))
+        let storage = Arc::new(DocDBStorage::init_with_pool(pool, bucket).await?);
+        Ok(Self(storage))
     }
 
     pub async fn init_pool(database: &str) -> JwstStorageResult<Self> {
-        Ok(Self(Arc::new(DocDBStorage::init_pool(database).await?)))
+        let storage = Arc::new(DocDBStorage::init_pool(database).await?);
+        #[cfg(feature = "postgres")]
+        if database.starts_with("postgres") {
+            storage.clone().listen_remote(database).await?;
+        }
+        Ok(Self(storage))
+    }
+
+    #[cfg(feature = "postgres")]
+    pub async fn listen_remote(&self, database: &str) -> JwstStorageResult<()> {
+        if database.starts_with("postgres") {
+            self.0.clone().listen_remote(database).await?
+        }
+        Ok(())
     }
 
     pub fn remote(&self) -> &RwLock<HashMap<String, Sender<Vec<u8>>>> {
