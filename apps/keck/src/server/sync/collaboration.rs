@@ -234,6 +234,54 @@ mod test {
         close_collaboration_server(child);
     }
 
+    #[test]
+    #[ignore = "requires redis"]
+    fn multi_node_sync_with_redis() {
+        let redis_port = thread_rng().gen_range(31000..=32000);
+        let mut redis_child = Command::new("redis-server")
+            .args(["--save", "", "--appendonly", "no", "--port", &redis_port.to_string()])
+            .stdout(Stdio::null())
+            .spawn()
+            .expect("start redis");
+        sleep(Duration::from_millis(500));
+
+        let server_a = thread_rng().gen_range(10000..=20000);
+        let server_b = thread_rng().gen_range(20001..=30000);
+        let child_a = start_collaboration_server_with_redis(server_a, redis_port);
+        let child_b = start_collaboration_server_with_redis(server_b, redis_port);
+
+        let rt = Arc::new(Runtime::new().unwrap());
+        let workspace_id = "redis";
+        {
+            let context = rt.block_on(async move {
+                Arc::new(TestContext::new(Arc::new(
+                    JwstStorage::new_with_migration("sqlite::memory:", BlobStorageType::DB)
+                        .await
+                        .expect("get storage: memory sqlite failed"),
+                )))
+            });
+            let remote = format!("ws://localhost:{server_a}/collaboration/{workspace_id}");
+            start_websocket_client_sync(
+                rt.clone(),
+                context.clone(),
+                Arc::default(),
+                remote,
+                workspace_id.to_owned(),
+            );
+            let mut workspace = rt.block_on(async move { context.get_workspace(workspace_id).await.unwrap() });
+            create_block(&mut workspace, "b1".to_string(), "list".to_string());
+        }
+
+        sleep(Duration::from_secs(1));
+        let ret = get_block_from_server(workspace_id.to_string(), "b1".to_string(), server_b);
+        assert!(!ret.is_empty());
+
+        close_collaboration_server(child_a);
+        close_collaboration_server(child_b);
+        let _ = redis_child.kill();
+        let _ = redis_child.wait();
+    }
+
     fn get_block_from_server(workspace_id: String, block_id: String, server_port: u16) -> String {
         let rt = Runtime::new().unwrap();
         rt.block_on(async {
@@ -261,6 +309,35 @@ mod test {
             .env("KECK_PORT", port.to_string())
             .env("USE_MEMORY_SQLITE", "true")
             .env("KECK_LOG", "debug")
+            .stdout(Stdio::piped())
+            .spawn()
+            .expect("Failed to run command");
+
+        if let Some(ref mut stdout) = child.stdout {
+            let reader = BufReader::new(stdout);
+
+            for line in reader.lines() {
+                let line = line.expect("Failed to read line");
+                info!("{}", line);
+
+                if line.contains("listening on 0.0.0.0:") {
+                    info!("Keck server started");
+                    break;
+                }
+            }
+        }
+
+        child
+    }
+
+    fn start_collaboration_server_with_redis(port: u16, redis_port: u16) -> Child {
+        let url = format!("redis://127.0.0.1:{redis_port}");
+        let mut child = Command::new("cargo")
+            .args(&["run", "-p", "keck"])
+            .env("KECK_PORT", port.to_string())
+            .env("USE_MEMORY_SQLITE", "true")
+            .env("KECK_LOG", "debug")
+            .env("REDIS_URL", url)
             .stdout(Stdio::piped())
             .spawn()
             .expect("Failed to run command");
