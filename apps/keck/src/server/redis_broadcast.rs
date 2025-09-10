@@ -22,11 +22,15 @@ pub async fn setup_redis_broadcast(
         }
     }
 
+    // Capture the current runtime handle for use in non-async callbacks
+    let runtime_handle = tokio::runtime::Handle::current();
+
     // Awareness subscription with Redis publishing
     {
         let sender = sender.clone();
         let workspace_id = workspace.id();
         let redis_sync = redis_sync.clone();
+        let runtime_handle = runtime_handle.clone();
 
         workspace
             .subscribe_awareness(move |awareness, e| {
@@ -44,7 +48,7 @@ pub async fn setup_redis_broadcast(
                 if let Some(redis_sync) = redis_sync.clone() {
                     let workspace_id = workspace_id.clone();
                     let buffer = buffer.clone();
-                    tokio::spawn(async move {
+                    runtime_handle.block_on(async move {
                         if let Err(e) = redis_sync.publish_operation(&workspace_id, OperationType::Awareness, buffer).await {
                             debug!("Failed to publish awareness to Redis: {}", e);
                         }
@@ -64,6 +68,7 @@ pub async fn setup_redis_broadcast(
         let sender = sender.clone();
         let workspace_id = workspace.id();
         let redis_sync = redis_sync.clone();
+        let runtime_handle = runtime_handle.clone();
 
         workspace.subscribe_doc(move |update, history| {
             use jwst_codec::encode_update_as_message;
@@ -86,7 +91,7 @@ pub async fn setup_redis_broadcast(
                         let broadcast_update_clone = broadcast_update.clone();
                         let sendable_update_clone = sendable_update.clone();
                         
-                        tokio::spawn(async move {
+                        runtime_handle.block_on(async move {
                             // Publish raw content
                             if let Err(e) = redis_sync.publish_operation(&workspace_id, OperationType::RawContent, broadcast_update_clone).await {
                                 debug!("Failed to publish raw content to Redis: {}", e);
