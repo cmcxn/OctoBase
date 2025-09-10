@@ -5,15 +5,74 @@ use axum::{
     response::Response,
     Json,
 };
+use async_trait::async_trait;
 use futures::FutureExt;
-use jwst_rpc::{axum_socket_connector, handle_connector};
+use jwst_rpc::{axum_socket_connector, handle_connector, RpcContextImpl, BroadcastChannels, BroadcastType};
+use jwst_storage::{JwstStorage, JwstStorageResult};
+use jwst_core::Workspace;
 use serde::Serialize;
+use tokio::sync::{broadcast, mpsc::Sender};
 
 use super::*;
+use crate::server::redis_broadcast;
 
 #[derive(Serialize)]
 pub struct WebSocketAuthentication {
     protocol: String,
+}
+
+/// Redis-aware RPC context that integrates Redis sync with the standard RPC flow
+struct RedisAwareContext {
+    inner: Arc<Context>,
+}
+
+impl RedisAwareContext {
+    fn new(context: Arc<Context>) -> Self {
+        Self { inner: context }
+    }
+}
+
+#[async_trait]
+impl RpcContextImpl<'_> for RedisAwareContext {
+    fn get_storage(&self) -> &JwstStorage {
+        self.inner.get_storage()
+    }
+
+    fn get_channel(&self) -> &BroadcastChannels {
+        self.inner.get_channel()
+    }
+
+    async fn get_workspace(&self, id: &str) -> JwstStorageResult<Workspace> {
+        self.inner.get_workspace(id).await
+    }
+
+    async fn join_broadcast(
+        &self,
+        workspace: &mut Workspace,
+        identifier: String,
+        last_synced: Sender<i64>,
+    ) -> broadcast::Sender<BroadcastType> {
+        let id = workspace.id();
+        info!("Setting up Redis-aware broadcast for workspace: {} (client: {})", id, identifier);
+        
+        // Get or create the broadcast channel using the standard method
+        let broadcast_tx = self.inner.join_broadcast(workspace, identifier.clone(), last_synced).await;
+        
+        // If Redis sync is available, set up Redis-aware broadcasting
+        if let Some(redis_sync) = self.inner.get_redis_sync() {
+            info!("Integrating Redis sync for workspace: {}", id);
+            redis_broadcast::setup_redis_broadcast(
+                workspace,
+                identifier,
+                broadcast_tx.clone(),
+                Some(redis_sync),
+            ).await;
+        } else {
+            info!("No Redis sync available, using standard broadcast for workspace: {}", id);
+        }
+
+        broadcast_tx
+    }
 }
 
 pub async fn auth_handler(Path(workspace_id): Path<String>) -> Json<WebSocketAuthentication> {
@@ -29,13 +88,19 @@ pub async fn upgrade_handler(
     ws: WebSocketUpgrade,
 ) -> Response {
     let identifier = nanoid!();
+    info!("WebSocket upgrade request for workspace: {} (client: {})", workspace, identifier);
+    
     if let Err(e) = context.create_workspace(workspace.clone()).await {
-        error!("create workspace failed: {:?}", e);
+        error!("Failed to create workspace {}: {:?}", workspace, e);
     }
     
-    // Context now implements RPC with Redis support
+    // Use Redis-aware context for collaboration
+    let redis_aware_context = Arc::new(RedisAwareContext::new(context.clone()));
+    
+    info!("Establishing WebSocket collaboration for workspace: {} (client: {})", workspace, identifier);
+    
     ws.protocols(["AFFiNE"]).on_upgrade(move |socket| {
-        handle_connector(context, workspace.clone(), identifier, move || {
+        handle_connector(redis_aware_context, workspace.clone(), identifier, move || {
             axum_socket_connector(socket, &workspace)
         })
         .map(|_| ())

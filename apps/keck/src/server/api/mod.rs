@@ -4,7 +4,7 @@ mod blobs;
 mod blocks;
 mod doc;
 
-use std::collections::{HashMap, hash_map::Entry};
+use std::collections::HashMap;
 
 use axum::Router;
 #[cfg(feature = "api")]
@@ -15,9 +15,9 @@ use axum::{
     routing::{delete, get, head, post},
 };
 use doc::doc_apis;
-use jwst_rpc::{BroadcastChannels, BroadcastType, RpcContextImpl};
+use jwst_rpc::{BroadcastChannels, RpcContextImpl};
 use jwst_storage::{BlobStorageType, JwstStorage, JwstStorageResult};
-use tokio::sync::{RwLock, broadcast, mpsc::Sender};
+use tokio::sync::RwLock;
 
 use super::{redis_sync::RedisSync, *};
 
@@ -66,26 +66,42 @@ impl Context {
         }
         .expect("Cannot create database");
 
-        // Initialize Redis sync if Redis URL is provided
-        let redis_sync = if let Ok(redis_url) = dotenvy::var("REDIS_URL") {
-            match RedisSync::new(&redis_url).await {
-                Ok(sync) => {
-                    if sync.is_connected().await {
-                        info!("Redis sync enabled: {}", redis_url);
-                        Some(Arc::new(sync))
-                    } else {
-                        warn!("Redis sync initialization failed, falling back to single-node mode");
+        // Initialize Redis sync if Redis URL is provided or detect local Redis
+        let redis_sync = {
+            let redis_url = dotenvy::var("REDIS_URL").unwrap_or_else(|_| {
+                // Try to detect local Redis
+                info!("REDIS_URL not set, checking for local Redis at redis://localhost:6379");
+                "redis://localhost:6379".to_string()
+            });
+
+            info!("Attempting Redis initialization with URL pattern: {}", 
+                  if redis_url.contains("password") { 
+                      "redis://username:***@host:port/db" 
+                  } else { 
+                      &redis_url 
+                  });
+
+            // Test if Redis service is available first
+            if RedisSync::test_redis_service(&redis_url).await {
+                match RedisSync::new(&redis_url).await {
+                    Ok(sync) => {
+                        if sync.is_connected().await {
+                            info!("✅ Redis sync enabled successfully");
+                            Some(Arc::new(sync))
+                        } else {
+                            warn!("⚠️ Redis sync initialization failed connection test, falling back to single-node mode");
+                            None
+                        }
+                    }
+                    Err(e) => {
+                        warn!("⚠️ Failed to initialize Redis sync: {}, falling back to single-node mode", e);
                         None
                     }
                 }
-                Err(e) => {
-                    warn!("Failed to initialize Redis sync: {}, falling back to single-node mode", e);
-                    None
-                }
+            } else {
+                info!("ℹ️ Redis service not available, running in single-node mode");
+                None
             }
-        } else {
-            info!("Redis URL not provided, running in single-node mode");
-            None
         };
 
         Context {
