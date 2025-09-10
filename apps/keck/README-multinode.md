@@ -63,15 +63,32 @@ Load Balancer
 Set these variables for each Keck node:
 
 ```bash
-# Required
+# Required for multi-node setup
 DATABASE_URL=postgres://user:password@host:5432/database
+
+# Redis configuration (optional, will auto-detect redis://localhost:6379)
+# Basic Redis:
 REDIS_URL=redis://localhost:6379
 
-# Optional
+# Redis with password:
+REDIS_URL=redis://:your_password@localhost:6379
+
+# Redis with username and password:
+REDIS_URL=redis://username:password@localhost:6379
+
+# Redis with specific database:
+REDIS_URL=redis://localhost:6379/2
+
+# Redis with all options:
+REDIS_URL=redis://username:password@redis.example.com:6379/1
+
+# Optional settings
 KECK_PORT=3000              # Port for this node
 NODE_ID=keck-node-1         # Unique identifier for this node
 HOOK_ENDPOINT=              # Webhook URL for block changes
 ```
+
+**Note**: If `REDIS_URL` is not set, Keck will automatically check for Redis at `redis://localhost:6379`. If Redis is not available, it will run in single-node mode.
 
 ### Running Multiple Nodes
 
@@ -144,6 +161,20 @@ DATABASE_URL=postgres://... cargo run --bin migrations
 
 ## Testing Multi-Node Setup
 
+### Automated Testing
+
+Use the provided test script to verify Redis synchronization:
+
+```bash
+# Basic test (uses defaults)
+./test-redis-sync.sh
+
+# Test with custom Redis and database
+REDIS_URL=redis://localhost:6379 DATABASE_URL=postgres://localhost:5432/keck ./test-redis-sync.sh
+```
+
+### Manual Testing
+
 1. **Connect to the load balancer**:
    ```javascript
    const ws = new WebSocket('ws://localhost:3000/collaboration/test-room');
@@ -161,17 +192,66 @@ DATABASE_URL=postgres://... cargo run --bin migrations
 
 ## Troubleshooting
 
+### Redis Connection Issues
+
+- **"Redis service not available"**: Check if Redis is running with `redis-cli ping`
+- **"Redis connection test failed"**: Verify Redis URL format and credentials
+- **"Redis connection test timed out"**: Check network connectivity to Redis server
+- **Single-node mode fallback**: This is normal when Redis is unavailable
+
+```bash
+# Check Redis status
+redis-cli ping
+
+# Test Redis with authentication
+redis-cli -a your_password ping
+
+# Check Redis connections
+redis-cli info clients
+
+# Monitor Redis activity
+redis-cli monitor
+
+# Check for Keck channels
+redis-cli pubsub channels keck:*
+```
+
+### Synchronization Issues
+
+- **Changes not syncing between nodes**: 
+  - Check Redis logs with `redis-cli monitor`
+  - Verify NODE_ID is unique for each instance
+  - Ensure all nodes use the same Redis instance and database
+  - Check Keck logs for Redis publish/subscribe messages
+
+- **Node startup messages to look for**:
+  ```
+  ✅ Redis sync enabled successfully
+  ⚠️ Redis sync initialization failed, falling back to single-node mode
+  ℹ️ Redis service not available, running in single-node mode
+  ```
+
+### Debug Commands
+
+```bash
+# Check node logs
+tail -f /tmp/keck-node-*.log
+
+# Monitor Redis pub/sub
+redis-cli monitor | grep keck:sync
+
+# Test WebSocket connection
+websocat ws://localhost:3000/collaboration/test-room
+
+# Check node health
+curl http://localhost:3000/api/workspace/test/blob/test
+```
+
 ### Connection Issues
 
 - Check if all services are running: `docker-compose ps`
 - Verify Redis connectivity: `redis-cli ping`
 - Check PostgreSQL connectivity: `psql -h localhost -p 5432 -U keck -d keck`
-
-### Synchronization Issues
-
-- Check Redis logs for pub/sub activity
-- Verify NODE_ID is unique for each instance
-- Ensure all nodes use the same Redis instance
 
 ### Performance Issues
 
