@@ -30,6 +30,7 @@ impl MigrationTrait for Migration {
                     .table(Docs::Table)
                     .name("docs_guid")
                     .col(Docs::Guid)
+                    .unique()
                     .to_owned(),
             )
             .await
