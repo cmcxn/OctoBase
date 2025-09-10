@@ -2549,6 +2549,7 @@ name = "keck"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "axum",
  "axum-test-helper",
  "cfg-if 1.0.0",
@@ -2575,6 +2576,7 @@ dependencies = [
  "tokio",
  "tower",
  "tower-http",
+ "url",
  "utoipa",
  "utoipa-swagger-ui",
 ]
