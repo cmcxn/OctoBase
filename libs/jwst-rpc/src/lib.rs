@@ -1,5 +1,5 @@
 #[forbid(unsafe_code)]
-mod broadcast;
+pub mod broadcast;
 mod client;
 mod connector;
 mod context;
@@ -32,7 +32,7 @@ use tokio::{
     time::{sleep, Duration},
 };
 pub use utils::{connect_memory_workspace, MinimumServerContext};
-use utils::{decode_update_with_guid, encode_update_with_guid};
+pub use utils::{decode_update_with_guid, encode_update_with_guid};
 #[cfg(feature = "webrtc")]
 pub use webrtcrs::peer_connection::sdp::session_description::RTCSessionDescription;
 

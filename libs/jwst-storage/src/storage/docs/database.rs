@@ -2,7 +2,7 @@ use std::collections::hash_map::Entry;
 
 use jwst_codec::{encode_update_as_message, CrdtReader, Doc, DocOptions, RawDecoder, StateVector};
 use jwst_core::{DocStorage, Workspace};
-use sea_orm::Condition;
+use sea_orm::{sea_query::OnConflict, Condition};
 use tokio::task::spawn_blocking;
 
 use super::{entities::prelude::*, *};
@@ -187,7 +187,6 @@ impl DocDBStorage {
 
         let is_workspace = Self::is_workspace(conn, guid).await?;
 
-        Docs::delete_many().filter(DocsColumn::Guid.eq(guid)).exec(conn).await?;
         Docs::insert(DocsActiveModel {
             workspace_id: Set(workspace.into()),
             guid: Set(guid.into()),
@@ -196,6 +195,16 @@ impl DocDBStorage {
             created_at: Set(Utc::now().into()),
             ..Default::default()
         })
+        .on_conflict(
+            OnConflict::column(DocsColumn::Guid)
+                .update_columns([
+                    DocsColumn::WorkspaceId,
+                    DocsColumn::Blob,
+                    DocsColumn::IsWorkspace,
+                    DocsColumn::CreatedAt,
+                ])
+                .to_owned(),
+        )
         .exec(conn)
         .await?;
         trace!("end replace: {workspace}");
